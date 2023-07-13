@@ -1,0 +1,113 @@
+#!/bin/sh -eu
+
+readonly PROGRAM="pipe"
+readonly VERSION="0.1.0"
+
+MODE=client
+SOCKNAME=/tmp/pipe.sock
+LOCKNAME=/tmp/pipe.lock
+NONBLOCK=false
+
+readonly SUCCESS=0
+readonly FAILURE=1
+
+# shellcheck disable=SC2059
+errorf() {
+  fmt="$1"; shift
+  printf "err: ${fmt}" "$@"
+}
+
+errorfln() {
+  fmt="$1"; shift
+  errorf "${fmt}\n" "$@"
+}
+
+error() { errorfln '%s' "$*"; }
+
+fatalf()   { errorf   "$@"; exit $FAILURE; }
+fatalfln() { errorfln "$@"; exit $FAILURE; }
+fatal()    { error    "$@"; exit $FAILURE; }
+
+print_version() { echo "${PROGRAM} v${VERSION}"; }
+
+print_usage() {
+cat <<EOF
+usage: pipe <MODE> [OPTIONS...]
+
+MODE:
+  -i, --input         Spawn the input end of the pipe (default)
+  -o, --output        Spawn the output end of the pipe
+
+OPTIONS:
+  -n, --name NAME     Name of the pipe
+  -u, --non-blocking  Exit if unable to write
+  -b, --blocking      Block until able to write (default)
+
+  -h, --help          Print this help.
+  -V, --version       Print the version information
+EOF
+}
+
+requires() {
+  command -v "$1" >/dev/null || fatal "required command '${1}' not found in PATH"
+}
+  
+parse() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+    -h|--help)
+      print_usage
+      exit $SUCCESS
+      ;;
+    -V|--version)
+      print_version
+      exit $SUCCESS
+      ;;
+    -i|--input)  MODE=client ;;
+    -o|--output) MODE=server ;;
+    -n|--name)
+      SOCKNAME="/tmp/pipe-${2}.sock"
+      LOCKNAME="/tmp/pipe-${2}.lock"
+      shift
+      ;;
+    -u|--non-blocking) NONBLOCK=true ;;
+    -b|--blocking)     NONBLOCK=false ;;
+    *)
+      errorf "unrecognized argument: '%s'\n\n" "$1"
+      print_usage
+      exit $FAILURE
+      ;;
+    esac
+
+    shift
+  done
+}
+
+cleanup() {
+  ! [ "$MODE" = "server" ] || {
+    ! [ -S "$SOCKNAME" ] || unlink "$SOCKNAME"
+    ! [ -f "$LOCKNAME" ] || unlink "$LOCKNAME"
+  }
+}
+
+main() {
+  requires nc
+  requires flock
+
+  parse "$@"
+
+  trap exit    INT TERM
+	trap cleanup EXIT
+
+  case "$MODE" in
+    server) nc -lkU "$SOCKNAME" ;;
+    client)
+      if "$NONBLOCK"
+      then flock -n "$LOCKNAME" nc -NU "$SOCKNAME"
+      else flock    "$LOCKNAME" nc -NU "$SOCKNAME"
+      fi
+    ;;
+  esac
+}
+
+main "$@"
