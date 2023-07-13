@@ -6,7 +6,8 @@ readonly VERSION="0.1.0"
 MODE=client
 SOCKNAME=/tmp/pipe.sock
 LOCKNAME=/tmp/pipe.lock
-NONBLOCK=false
+SYNC=true
+BLOCK=true
 
 readonly SUCCESS=0
 readonly FAILURE=1
@@ -40,6 +41,8 @@ MODE:
 
 OPTIONS:
   -n, --name NAME     Name of the pipe
+      --no-sync       Don't synchronize writes
+  -s, --sync          Synchronize writes (default)
   -u, --non-blocking  Exit if unable to write
   -b, --blocking      Block until able to write (default)
 
@@ -70,8 +73,10 @@ parse() {
       LOCKNAME="/tmp/pipe-${2}.lock"
       shift
       ;;
-    -u|--non-blocking) NONBLOCK=true ;;
-    -b|--blocking)     NONBLOCK=false ;;
+    -s|--sync) SYNC=true ;;
+    --no-sync) SYNC=false ;;
+    -u|--non-blocking) BLOCK=false ;;
+    -b|--blocking)     BLOCK=true ;;
     *)
       errorf "unrecognized argument: '%s'\n\n" "$1"
       print_usage
@@ -102,9 +107,14 @@ main() {
   case "$MODE" in
     server) nc -lkU "$SOCKNAME" ;;
     client)
-      if "$NONBLOCK"
-      then flock -n "$LOCKNAME" nc -NU "$SOCKNAME"
-      else flock    "$LOCKNAME" nc -NU "$SOCKNAME"
+      "$SYNC" || {
+        nc -NU "$SOCKNAME"
+        return
+      }
+
+      if "$BLOCK"
+      then flock    "$LOCKNAME" nc -NU "$SOCKNAME"
+      else flock -n "$LOCKNAME" nc -NU "$SOCKNAME"
       fi
     ;;
   esac
