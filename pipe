@@ -54,6 +54,25 @@ EOF
 requires() {
   command -v "$1" >/dev/null || fatal "required command '${1}' not found in PATH"
 }
+
+get_value() {
+  # Test if $2 is set; if so, return it
+  [ -z "${2+_}" ] || { echo "$2"; return $SUCCESS; }
+
+  # Test if $1 is of the form --key=; if so return an empty string
+  [ "$1" = "${1%=}" ] || return $SUCCESS
+
+  # Test if $1 is of the form --key=value; if so return value
+  _value="$(
+    echo "$1" | {
+      IFS='=' read -r _key _value
+      [ -z "$_value" ] || { echo "$_value"; return $SUCCESS; }
+    }
+  )"
+  [ -z "$_value" ] || { echo "$_value"; return $SUCCESS; }
+  
+  fatal "a value must be provided for '${1}'" >&2
+}
   
 parse() {
   while [ "$#" -gt 0 ]; do
@@ -68,9 +87,10 @@ parse() {
       ;;
     -i|--input)  MODE=client ;;
     -o|--output) MODE=server ;;
-    -n|--name)
-      PIDFILE="/tmp/pipe-${2}.pid"
-      LOCKNAME="/tmp/pipe-${2}.lock"
+    -n|--name|--name=*)
+      _name="$(get_value "$@")" 2>&1
+      PIDFILE="/tmp/pipe-${_name}.pid"
+      LOCKNAME="/tmp/pipe-${_name}.lock"
       shift
       ;;
     -s|--sync) SYNC=true ;;
