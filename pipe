@@ -1,10 +1,10 @@
 #!/bin/sh -eu
 
 readonly PROGRAM="pipe"
-readonly VERSION="0.1.0"
+readonly VERSION="0.2.0"
 
 MODE=client
-SOCKNAME=/tmp/pipe.sock
+PIDFILE=/tmp/pipe.pid
 LOCKNAME=/tmp/pipe.lock
 SYNC=true
 BLOCK=true
@@ -69,7 +69,7 @@ parse() {
     -i|--input)  MODE=client ;;
     -o|--output) MODE=server ;;
     -n|--name)
-      SOCKNAME="/tmp/pipe-${2}.sock"
+      PIDFILE="/tmp/pipe-${2}.pid"
       LOCKNAME="/tmp/pipe-${2}.lock"
       shift
       ;;
@@ -90,33 +90,43 @@ parse() {
 
 cleanup() {
   ! [ "$MODE" = "server" ] || {
-    ! [ -S "$SOCKNAME" ] || unlink "$SOCKNAME"
+    ! [ -f "$PIDFILE"  ] || unlink "$PIDFILE"
     ! [ -f "$LOCKNAME" ] || unlink "$LOCKNAME"
   }
 }
 
 main() {
-  requires nc
-  requires flock
+  _pid="$$"
+
+  ! "$SYNC" || requires flock
 
   parse "$@"
 
-  trap exit    INT TERM
-	trap cleanup EXIT
-
   case "$MODE" in
-    server) nc -lkU "$SOCKNAME" ;;
+    server)
+      [ ! -e "$PIDFILE" ] || fatal "'${PIDFILE}' already exists"
+
+      trap exit    INT TERM
+      trap cleanup EXIT
+
+      echo "$_pid" > "$PIDFILE"
+      cat
+      ;;
     client)
+      [ -e "$PIDFILE" ] || fatal "'${PIDFILE}' doesn't exist"
+      _pid="$(cat "$PIDFILE")"
+      _stdin="/proc/${_pid}/fd/0"
+
       "$SYNC" || {
-        nc -NU "$SOCKNAME"
+        cat > "$_stdin"
         return
       }
 
       if "$BLOCK"
-      then flock    "$LOCKNAME" nc -NU "$SOCKNAME"
-      else flock -n "$LOCKNAME" nc -NU "$SOCKNAME"
+      then flock    "$LOCKNAME" cat > "$_stdin"
+      else flock -n "$LOCKNAME" cat > "$_stdin"
       fi
-    ;;
+      ;;
   esac
 }
 
